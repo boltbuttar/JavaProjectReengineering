@@ -1,0 +1,148 @@
+// schema.prisma — HealthBridge Hospital Management System
+// Reflects the REFACTORED (normalised) schema from Part F
+// Used for Parts E, F, and G database tasks
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// REFACTORED MODELS (3NF — Part F1)
+// ─────────────────────────────────────────────────────────────
+
+/// Normalised patient record. Replaces legacy pat_master.
+/// Fixed: no repeating phone columns, no plain-text doctor name,
+///        no VARCHAR date, no FLOAT currency, no missing PK.
+model Patient {
+  patientId       Int      @id @default(autoincrement()) @map("patient_id")
+  fullName        String   @db.VarChar(255)               @map("full_name")
+  dateOfBirth     DateTime @db.Date                       @map("date_of_birth")
+  gender          String   @db.Char(1)
+  registeredDocId Int?                                    @map("registered_doc_id")
+  totalVisits     Int      @default(0)                    @map("total_visits")
+  notes           String?  @db.Text
+
+  // Relations
+  registeredDoctor Doctor?        @relation("RegisteredDoctor", fields: [registeredDocId], references: [doctorId])
+  phones           PatientPhone[]
+  addresses        PatientAddress[]
+  appointments     Appointment[]
+  billings         Billing[]
+
+  @@map("patients")
+}
+
+/// Phone numbers — extracted from ph1/ph2/ph3 repeating group (1NF fix)
+model PatientPhone {
+  phoneId     Int    @id @default(autoincrement()) @map("phone_id")
+  patientId   Int                                  @map("patient_id")
+  phoneNumber String @db.VarChar(20)              @map("phone_number")
+  phoneType   String @default("Mobile") @db.VarChar(20) @map("phone_type")
+
+  patient Patient @relation(fields: [patientId], references: [patientId], onDelete: Cascade)
+
+  @@map("patient_phones")
+}
+
+/// Address records — extracted from addr1/addr2/city (3NF fix)
+model PatientAddress {
+  addressId    Int    @id @default(autoincrement()) @map("address_id")
+  patientId    Int                                  @map("patient_id")
+  addressLine1 String @db.VarChar(255)              @map("address_line1")
+  addressLine2 String? @db.VarChar(255)             @map("address_line2")
+  city         String @db.VarChar(100)
+  addressType  String @default("Home") @db.VarChar(20) @map("address_type")
+
+  patient Patient @relation(fields: [patientId], references: [patientId], onDelete: Cascade)
+
+  @@map("patient_addresses")
+}
+
+/// Doctor — naming standardised to snake_case (R3 fix)
+model Doctor {
+  doctorId      Int     @id @map("doctor_id")
+  fullName      String  @db.VarChar(255)   @map("full_name")
+  speciality    String  @db.VarChar(255)
+  contactNo     String  @db.VarChar(20)    @map("contact_no")
+  joinDate      DateTime @db.Date          @map("join_date")
+  salaryMonthly Decimal  @db.Decimal(12,2) @map("salary_monthly")
+  deptId        Int                        @map("dept_id")
+  isActive      Boolean  @default(true)    @map("is_active")
+
+  department  Department @relation(fields: [deptId], references: [deptId])
+  patients    Patient[]  @relation("RegisteredDoctor")
+  appointments Appointment[]
+
+  @@map("doctors")
+}
+
+/// Department
+model Department {
+  deptId   Int     @id @map("dept_id")
+  deptName String  @db.VarChar(255) @map("dept_name")
+  hodId    Int?                     @map("hod_id")   // FK replaces plain name
+  budget   Decimal @db.Decimal(15,2)
+
+  doctors Doctor[]
+
+  @@map("departments")
+}
+
+/// Appointment status reference table (R2 fix — replaces CHAR(1) magic values)
+model ApptStatusRef {
+  statusCode  String @id @db.Char(1)   @map("status_code")
+  description String @db.VarChar(50)
+
+  appointments Appointment[]
+
+  @@map("appt_status_ref")
+}
+
+/// Refactored Appointment — T1/T2/T3 applied (Part G)
+/// - apptDatetime: proper DateTime (was VARCHAR text)
+/// - roomNumber + buildingBlock: split (was 'Room 3 Block B' in one column)
+/// - patient_nm, patient_ph, doc_name removed (FK joins replace them)
+/// - net_fee removed (derived: fee - discount)
+/// - Audit columns added (R5 fix)
+model Appointment {
+  apptId        Int      @id                          @map("appt_id")
+  patientId     Int                                   @map("patient_id")
+  docId         Int                                   @map("doc_id")
+  apptDatetime  DateTime                              @map("appt_datetime")
+  status        String   @db.Char(1)
+  fee           Decimal  @db.Decimal(10,2) @default(0)
+  discount      Decimal  @db.Decimal(10,2) @default(0)
+  roomNumber    Int                                   @map("room_number")
+  buildingBlock String   @db.VarChar(20)              @map("building_block")
+  createdAt     DateTime @default(now())              @map("created_at")
+  updatedAt     DateTime @updatedAt                   @map("updated_at")
+  createdBy     String?  @db.VarChar(100)             @map("created_by")
+
+  patient    Patient       @relation(fields: [patientId], references: [patientId])
+  doctor     Doctor        @relation(fields: [docId],     references: [doctorId])
+  statusRef  ApptStatusRef @relation(fields: [status],    references: [statusCode])
+
+  @@map("appointments")
+}
+
+/// Billing — derived columns removed (R1 fix)
+/// tax_amt, grand_total, balance are computed via v_billing_summary VIEW
+model Billing {
+  billNo    String  @id @db.VarChar(50) @map("bill_no")
+  pid       Int
+  services  String? @db.Text             // Non-atomic — refactor with BillingService model
+  svcCost   Decimal @db.Decimal(10,2)    @map("svc_cost")
+  taxPct    Decimal @db.Decimal(5,2)     @map("tax_pct")
+  paid      Decimal @db.Decimal(10,2)
+  created   DateTime @db.Date
+  createdBy String?  @db.VarChar(100)    @map("created_by")
+
+  patient Patient @relation(fields: [pid], references: [patientId])
+
+  @@map("billing")
+}

@@ -1,0 +1,11 @@
+appt_id,patient_id,patient_nm,patient_ph,doc_id,doc_name,appt_date,status,fee,discount,net_fee,room
+1001,5,"Ali Hassan","0312-9876543",12,"Dr. Kamran Raza","15/03/2024 09:30","P",1500.00,0.00,1500.00,"Room 3 Block B"
+1002,8,"Sara Malik","0333-1234567",7,"Dr. Ayesha Noor","15/03/2024 10:00","C",2000.00,200.00,1800.00,"Room 7 Block A"
+1003,5,"Ali Hassan","0312-9876543",12,"Dr. Kamran Raza","16/03/2024 11:00","X",1500.00,0.00,1500.00,"Room 3 Block B"
+1004,21,"Hina Iqbal","0321-5556789",7,"Dr. Ayesha Noor","17/03/2024 09:00","H",2000.00,500.00,1500.00,"Room 7 Block A"
+1005,5,"Ali Hassan","0312-9876543",12,"Dr. Kamran Raza","18/03/2024 10:00","R",1500.00,0.00,1500.00,"Room 5 Block A"
+1006,8,"Sara Malik","0333-1234567",7,"Dr. Ayesha Noor","19/03/2024 14:00","C",2000.00,0.00,2000.00,"Room 2 Block C"
+1007,21,"Hina Iqbal","0321-5556789",12,"Dr. Kamran Raza","20/03/2024 11:30","P",1500.00,100.00,1400.00,"Room 1 Block B"
+1008,5,"Ali Hassan","0312-9876543",7,"Dr. Ayesha Noor","21/03/2024 09:00","H",2000.00,0.00,2000.00,"Room 7 Block A"
+1009,8,"Sara Malik","0333-1234567",12,"Dr. Kamran Raza","22/03/2024 15:00","P",1500.00,0.00,1500.00,"Room 3 Block B"
+1010,21,"Hina Iqbal","0321-5556789",7,"Dr. Ayesha Noor","23/03/2024 10:00","C",2000.00,200.00,1800.00,"Room 7 Block A"

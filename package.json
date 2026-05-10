@@ -1,0 +1,16 @@
+{
+  "name": "project_sre",
+  "version": "1.0.0",
+  "description": "Legacy Java Hospital Management System used for Software Re-Engineering analysis.   Covers code smells, dependency coupling, technical debt, data smell detection, schema normalisation, and data migration.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "prisma": "^7.8.0"
+  }
+}
