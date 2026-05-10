@@ -44,466 +44,317 @@ Project_SRE/
 
 | Tool | Purpose | Verification Evidence (include version) |
 |------|---------|------------------------------------------|
-| SonarQube via Docker | Static analysis, smells, metrics | Screenshot of SonarQube dashboard at http://localhost:9000 showing version |
-| SonarScanner | Submits project to SonarQube | Terminal output showing scanner version and BUILD SUCCESS |
-| Docker | Hosts SonarQube container | Screenshot of `docker --version` output |
+| SonarQube via Docker | Static analysis, smells, metrics | Screenshot of SonarQube dashboard at http://localhost:9000 showing version (Server 9.9.8.100196 LTS) |
+| SonarScanner | Submits project to SonarQube | Terminal output showing SonarScanner CLI 8.0.1.6346 and BUILD SUCCESS (Maven scan) |
+| Docker | Hosts SonarQube container | Screenshot of `docker --version` output (Docker 29.2.0, build 0b9d198) |
 | Python Tutor (online) | Step-by-step execution tracing | Screenshot with code loaded in Python Tutor and URL visible |
 | Draw.io or Graphviz | Control flow and dependency diagrams | Screenshot of diagram open in tool with version visible |
-| MySQL or PostgreSQL | Run legacy hospital schema | Screenshot of `mysql --version` or `psql --version` output |
+| MySQL or PostgreSQL | Run legacy hospital schema | Screenshot of `mysql --version` output (MySQL 8.4.9) |
 
 **Commands used for verification (copy/paste):**
 ```
 docker --version
-sonar-scanner -v
-mysql --version
+docker run --rm sonarsource/sonar-scanner-cli -v
+docker run --rm mysql:8.4 mysql --version
+docker run --rm maven:3.9.6-eclipse-temurin-11 mvn -v
 ```
+
+**SonarQube dashboard link used for screenshot:**
+http://localhost:9000/dashboard?id=com.healthbridge%3Ahealthbridge-hms
 
 ---
 
 ## Part B — Code Smell Analysis and Refactoring
 
-### B1. Five Category Smell Summary Table
+### B1. SonarQube Metrics Summary (Project Level)
 
-| # | Category | Smell Name | File and Line | Description | Problem | Treatment |
-|---|----------|-----------|--------------|-------------|---------|-----------|
-| 1 | **Cat 1 — Bloater** | Long Method | `PatientManager.java` L175–240 | `processFullAdmission()` spans 65+ lines combining validation, scheduling, billing, notification, and audit in one block | Untestable; any change to billing logic risks breaking audit and notification | Extract Method — split into `validatePatient()`, `createBillingRecord()`, `notifyPatient()`, `auditAdmission()` |
-| 2 | **Cat 2 — OO Abuser** | Switch Statements | `HospitalUtils.java` L33–43, L82–95 | Two `switch` blocks on raw `char` status; identical switch also in `PatientManager.java` L107 | Adding one new status requires editing 3 files; a missed `case` silently returns `"Unknown"` | Replace Type Code with Enum — `AppointmentStatus` enum with `getLabel()` collapses all switches to one line |
-| 3 | **Cat 3 — Change Preventer** | Shotgun Surgery | `HospitalUtils.java` L33; `PatientManager.java` L107; `AppointmentService.java` L67 | Status char literals scattered across 3 unrelated classes — a single conceptual change touches all three | One missed file introduces a silent scheduling defect with no compile-time warning | Move Method + Enum — centralise all status logic in `AppointmentStatus`; callers use `status.getLabel()` |
-| 4 | **Cat 4 — Dispensable** | Duplicate Code | `PatientManager.java` L47/L85/L138; `BillingProcessor.java` L51; `ReportGenerator.java` L27 | Null-guard and outstanding-balance loop copy-pasted 5+ times across 3 files | Bug fix in one copy silently skips others; balance logic can diverge | Extract Method — `ValidationUtils.requireNonBlank()` and shared `getOutstandingBalance(pid)` |
-| 5 | **Cat 5 — Coupler** | Feature Envy | `AppointmentService.java` L35–55 | `rescheduleAppointment()` accesses Patient's phone/name and Doctor's name/speciality through PatientManager — more interested in foreign data than its own | Renaming `Patient.getPhone1()` forces a change in AppointmentService; impossible to test without full PatientManager | Move Method — push notification logic into PatientManager, or introduce `RescheduleEvent` DTO |
+Metrics source: SonarQube LTS (project key com.healthbridge:healthbridge-hms) using sonar-project.properties.
 
----
-
-### B2. Per-Smell Detailed Analysis
-
----
-
-#### Category 1 — Bloater: **Long Method**
-**File:** `PatientManager.java` | **Method:** `processFullAdmission()` | **Lines:** 175–240
-
-**Q1 — What is the smell?**  
-`processFullAdmission()` is a 65-line method that performs eight conceptually separate tasks in one monolithic block:
-1. Null validation of patient name  
-2. Check for existing patient and register if new  
-3. Validate doctor exists  
-4. Check room/time slot conflicts  
-5. Create and store the `Appointment` object  
-6. Compute derived billing values (taxAmt, grandTotal, balance)  
-7. Create and store the `Billing` object  
-8. Manually update the patient's visit count and last-bill field  
-9. Send an inline SMS notification  
-10. Print an inline audit log entry  
-
-Long methods are a Bloater (Category 1) because the method has grown beyond a single coherent responsibility, making it hard to read, test, or change.
-
-**Q2 — Why did it arise?**  
-This is a textbook case of accretion: each sprint added one more step to an already-long method because it was "easier" than creating a new service. Notification and audit were never extracted into dedicated classes (NotificationService exists but is never called from here).
-
-**Q3 — What is the impact?**  
-- **Readability:** A new developer cannot identify the method's purpose at a glance.  
-- **Testability:** The method cannot be unit-tested in isolation — billing, scheduling, and notification all run together.  
-- **Maintainability:** Any change to billing tax logic forces opening this method, risking accidental breakage of notification or audit logic on the same edit.
-
-**Q4 — Proposed Treatment:** *Extract Method* — decompose into:
-- `validateAndRegisterPatient()`  
-- `validateDoctorExists()`  
-- `checkRoomConflict()`  
-- `createBillingRecord()`  
-- `notifyPatient()` → delegates to NotificationService  
-- `auditAdmission()` → delegates to AuditService  
+| Metric | Value | Interpretation |
+|---|---|---|
+| ncloc | 1537 | Small to medium codebase, so targeted refactoring is feasible. |
+| functions | 298 | Many methods for the size, which suggests some boilerplate plus a few hotspots. |
+| complexity | 492 | Overall cyclomatic complexity is moderate; the worst methods should be isolated. |
+| complexity per function | 1.65 | Average is low, so most methods are simple and a few drive the complexity. |
+| cognitive_complexity | 205 | Some logic is hard to read; splitting multi-branch logic will help. |
+| code_smells | 173 | High for the size, indicating widespread maintainability issues. |
+| duplicated_lines_density | 3.9% | Moderate duplication, especially in billing and validation flows. |
+| sqale_rating | A (1.0) | Maintainability is rated A, so issues are localized rather than systemic. |
+### Selected Method: computeAppointmentPriority() in HospitalUtils.java (Lines 77–153)
 
 ---
 
-#### Category 2 — OO Abuser: **Switch Statements**
-**File:** `HospitalUtils.java` | **Methods:** `statusLabel()` L33, `getWardForSpeciality()` L50, `computeAppointmentPriority()` L82 | **Lines:** 33–95
+### D1. Execution Trace with Python Tutor
 
-**Q1 — What is the smell?**  
-Three separate switch/if-chain blocks all operate on raw primitive values (`char status`, `String speciality`) instead of type-safe objects. The status switch duplicates logic already present in PatientManager (`getAppointmentStatusLabel()` at line 107) — the same switch written twice.
+#### Q11 — Full Source Code of the Chosen Method
 
-**Q2 — Why did it arise?**  
-The `char status` field was chosen early in development to mirror the database's `CHAR(1)` column. Once a primitive type is used, switch-on-primitive becomes the natural pattern, and the same switch gets copy-pasted whenever a new caller needs a label.
-
-**Q3 — What is the impact?**  
-Open/Closed Principle violation: adding status `'W'` (Waitlisted) requires editing HospitalUtils, PatientManager, and AppointmentService. One omission produces a silent `"Unknown Status"` return that could affect scheduling logic.
-
-**Q4 — Proposed Treatment:** *Replace Type Code with Enum* — define:
 ```java
-public enum AppointmentStatus {
-    PENDING('P', "Pending"),
-    COMPLETED('C', "Completed"),
-    CANCELLED('X', "Cancelled"),
-    ON_HOLD('H', "On Hold"),
-    RESCHEDULED('R', "Rescheduled");
+// Class: HospitalUtils (src/main/java/com/healthbridge/util/HospitalUtils.java)
+public static int computeAppointmentPriority(Appointment appointment, Patient patient) {
+    int basePriority = 0;       // local var 1
+    int ageAdjustment = 0;      // local var 2
+    int visitAdjustment = 0;    // local var 3
+    int finalScore = 0;         // local var 4
 
-    private final char code;
-    private final String label;
-
-    AppointmentStatus(char code, String label) {
-        this.code  = code;
-        this.label = label;
+    double fee = appointment.getFee();
+    if (fee >= 5000) {
+        basePriority = 30;
+    } else if (fee >= 2000) {
+        basePriority = 20;
+    } else {
+        basePriority = 10;
     }
-    public String getLabel() { return label; }
-    public char   getCode()  { return code; }
-}
-```
-All switch blocks collapse to `status.getLabel()`.
 
----
-
-#### Category 3 — Change Preventer: **Shotgun Surgery**
-**Files:** `HospitalUtils.java` L33 & L82, `PatientManager.java` L107, `AppointmentService.java` L67  
-
-**Q1 — What is the smell?**  
-A single logical change — adding or renaming a status code — forces edits scattered across three unrelated classes. Shotgun Surgery is the inverse of Divergent Change: one change → many files touched.
-
-**Q2 — Why did it arise?**  
-The status codes were never centralised. Each developer who needed a status label simply wrote their own switch, creating three independent duplicates over time.
-
-**Q3 — What is the impact?**  
-Missing one of the three locations when a new status is added introduces a silent defect (falls through to `"Unknown Status"` or default `0` priority). In a hospital system this could cause a patient on hold to be incorrectly deprioritised.
-
-**Q4 — Proposed Treatment:** *Move Method + Replace Type Code with Enum* — centralise all status logic in `AppointmentStatus` enum. All three classes then call `AppointmentStatus.fromCode(c).getLabel()` — one file to change for any future status addition.
-
----
-
-#### Category 4 — Dispensable: **Duplicate Code**
-**Files:** `PatientManager.java` L47/L85/L138, `BillingProcessor.java` L51, `ReportGenerator.java` L27
-
-**Q1 — What is the smell?**  
-Two separate duplications exist:
-
-*Duplication A — Null/empty guard:*
-```java
-if (field == null || field.trim().isEmpty()) {
-    System.out.println("ERROR: ...");
-    return;
-}
-```
-This identical pattern appears **5 times** across PatientManager and BillingProcessor.
-
-*Duplication B — Outstanding balance loop:*
-```java
-for (Billing b : billings) {
-    if (b.getPid() == pid) total += b.getBalance();
-}
-```
-Identical logic in PatientManager.calculateOutstanding(), BillingProcessor.getPatientOutstanding(), and ReportGenerator.generateBillingReport().
-
-**Q2 — Why did it arise?**  
-Copy-paste development. Each method was written independently without checking whether the validation or calculation already existed elsewhere.
-
-**Q3 — What is the impact?**  
-Any bug fix in one copy is silently not applied to the others. A fix to the balance calculation in PatientManager will leave BillingProcessor returning stale results.
-
-**Q4 — Proposed Treatment:**  
-- *Extract Method* for the null guard → `ValidationUtils.requireNonBlank(String field, String fieldName)`  
-- *Extract Method* for the balance loop → `BillingRepository.getOutstandingBalance(int pid)`
-
----
-
-#### Category 5 — Coupler: **Feature Envy**
-**File:** `AppointmentService.java` | **Method:** `rescheduleAppointment()` | **Lines:** 35–55
-
-**Q1 — What is the smell?**  
-`rescheduleAppointment()` in AppointmentService is more interested in data held by PatientManager, Patient, and Doctor than in Appointment itself:
-- Calls `manager.findPatientById()` → reads `patient.getPhone1()` and `patient.getName()`  
-- Calls `manager.findDoctorById()` → reads `doctor.getFullName()` and `doctor.getSpeciality()`  
-
-The method performs **zero** operations on AppointmentService's own state.
-
-**Q2 — Why did it arise?**  
-AppointmentService was created as a thin wrapper over PatientManager, giving it no state of its own. Without an Appointment-centric data model, the service has to reach into other objects to collect the data it needs.
-
-**Q3 — What is the impact?**  
-AppointmentService is tightly coupled to the internal structure of both Patient and Doctor. Renaming `Patient.getPhone1()` to `getPhone()` requires a change here too, even though this is not a patient class. Testing `rescheduleAppointment()` requires constructing a fully populated PatientManager.
-
-**Q4 — Proposed Treatment:** *Move Method* — move the reschedule notification logic into PatientManager (which already owns Patient and Doctor data), or better, introduce a RescheduleEvent value object that carries all needed data, removing the cross-class field access.
-
----
-
-### B3. Smell Interaction and Prioritisation
-
-#### Q5 — Two Smells in the Same Area: How One Caused the Other
-
-**Smells Selected:**
-- **Cat 4 (Dispensable) — Duplicate Code** in `PatientManager.java` (lines 47, 85, 138) and `BillingProcessor.java` (line 51)
-- **Cat 1 (Bloater) — Long Method** in `PatientManager.java` — `processFullAdmission()` (lines 175–240)
-
-**How one caused the other:**
-
-The Duplicate Code smell is the root cause that directly contributed to the Long Method smell. In HealthBridge, there is no shared utility for input validation or billing calculation — every developer copy-pasted the null-guard block and the tax-derivation logic wherever they needed it. When `processFullAdmission()` was written, the author replicated the null-guard (lines 178–181), the fee-derivation block (lines 213–217), the billing construction logic (lines 219–225), and the visit-count update (lines 228–230) — all of which already existed elsewhere in the class. Because no `ValidationUtils` or `BillingService` existed to delegate to, the author had no choice but to inline everything, growing the method to 65 lines.
-
-This is a classic cascade: **Duplicate Code** → no reusable utility exists → **Long Method** grows because everything must be done inline. Fixing Duplicate Code first (extracting `ValidationUtils.requireNonBlank()` and `BillingCalculator.derive()`) would automatically reduce `processFullAdmission()` by approximately 20 lines, partially curing the Long Method smell without a separate refactoring pass.
-
-The interaction runs in both directions: the Long Method also *perpetuates* Duplicate Code, because developers who cannot understand the full 65-line method are afraid to refactor it and instead copy-paste pieces into new methods rather than calling the existing logic.
-
----
-
-#### Q6 — Greatest Risk to Long-Term Maintainability
-
-**Most Dangerous Smell: Long Method / God Class — `PatientManager.java`**
-
-The single smell that poses the greatest risk is the **Long Method** (`processFullAdmission()`, lines 175–240) embedded inside the **Large Class** `PatientManager`. This class currently owns: patient CRUD, appointment scheduling, billing creation, doctor management, department management, and report printing — seven distinct responsibilities in one 280-line file.
-
-**What a future developer would face:**
-
-A developer asked to add insurance-claim processing would open `PatientManager.java` and find 280 lines with no clear separation of concerns. To add insurance logic they would have to read all 280 lines to determine what state the system is in mid-admission, understand the inline tax derivation, and decide where to insert the insurance step without breaking billing, notification, and audit — all interleaved in the same method. Because `processFullAdmission()` has no unit tests that isolate billing from scheduling, any regression introduced would only surface at integration level. The cognitive load is compounded by the three separate null-guard duplications that create false landmarks ("is this a new validation block or the same pattern I just read?"). In a hospital context this risk is not abstract — a billing miscalculation caused by a misplaced insertion in this method could produce incorrect patient invoices or duplicate billing records with no audit trail.
-
----
-
-#### Q7 — Which Refactoring to Apply First
-
-**First treatment: Extract Method on `processFullAdmission()` in `PatientManager.java`**
-
-**Justification (Effort vs Benefit):**
-
-| Factor | Assessment |
-|--------|-----------|
-| **Effort** | Medium — method has clear logical seams (validation, scheduling, billing, notification). No algorithm changes needed. Existing JUnit tests catch any regression. |
-| **Benefit** | Very High — immediately reduces cognitive load, enables isolated unit testing of billing and notification, and breaks the circular dependency between PatientManager and inline audit/SMS logic. |
-| **Risk** | Low — Extract Method is a behaviour-preserving refactoring. The existing `HealthBridgeTest.java` test suite provides a safety net. |
-
-Compared to fixing Duplicate Code (requires scanning all files) or replacing Switch Statements with enums (requires changing Appointment, Doctor, and HospitalUtils in coordination), Extract Method on `processFullAdmission()` is contained to a single file, delivers the largest reduction in cyclomatic complexity per unit of effort, and directly enables the other refactorings — once billing derivation is in its own method, eliminating Duplicate Code in BillingProcessor becomes a simple delegation call.
-
----
-
-## Part B4 — Refactoring Demonstration
-
-### Q8 — Original Smelly Code (Switch Statement smell — Category 2 OO Abuser)
-
-**File:** HospitalUtils.java | **Lines:** 33–43  
-**Smell:** Switch Statement — the raw char status code is switched in multiple places.
-
-`java
-// *** SMELLY VERSION — HospitalUtils.java lines 33–43 ***
-// SMELL: Switch on primitive char — duplicated in PatientManager line 107
-//        and AppointmentService line 67. Adding a new status requires
-//        editing THREE separate files.
-public static String statusLabel(char status) {   // <-- raw char parameter
-    switch (status) {
-        case 'P': return "Pending";       // <-- magic literal
-        case 'C': return "Completed";     // <-- magic literal
-        case 'X': return "Cancelled";     // <-- magic literal
-        case 'H': return "On Hold";       // <-- magic literal
-        case 'R': return "Rescheduled";   // <-- magic literal
-        default:  return "Unknown Status";// <-- silent failure
-    }
-}
-
-// Also in PatientManager.java lines 107-115 — EXACT DUPLICATE:
-public String getAppointmentStatusLabel(char status) {
-    switch (status) {
-        case 'P': return "Pending";
-        case 'C': return "Completed";
-        case 'X': return "Cancelled";
-        case 'H': return "On Hold";
-        case 'R': return "Rescheduled";
-        default:  return "Unknown";
-    }
-}
-`
-
----
-
-### Q9 — Refactored Version
-
-**New file created:** AppointmentStatus.java  
-**Refactoring applied:** *Replace Type Code with Enum* (Fowler) + *Remove Duplicate Code*
-
-`java
-// *** REFACTORED — AppointmentStatus.java ***
-public enum AppointmentStatus {
-    PENDING('P',     "Pending"),
-    COMPLETED('C',   "Completed"),
-    CANCELLED('X',   "Cancelled"),
-    ON_HOLD('H',     "On Hold"),
-    RESCHEDULED('R', "Rescheduled");
-
-    private final char   code;
-    private final String label;
-
-    AppointmentStatus(char code, String label) {
-        this.code  = code;
-        this.label = label;
-    }
-    public char   getCode()  { return code; }
-    public String getLabel() { return label; }
-
-    public static AppointmentStatus fromCode(char code) {
-        for (AppointmentStatus s : values()) {
-            if (s.code == code) return s;
+    String dob = patient.getDateOfBirth();
+    int age = 0;
+    if (dob != null && dob.length() == 10) {
+        try {
+            int birthYear = Integer.parseInt(dob.substring(6, 10));
+            int currentYear = java.time.LocalDate.now().getYear();
+            age = currentYear - birthYear;
+        } catch (NumberFormatException e) {
+            age = 0;
         }
-        throw new IllegalArgumentException("Unknown status: " + code);
     }
 
-    @Override public String toString() { return label; }
+    if (age >= 65) {
+        ageAdjustment = 20;
+    } else if (age >= 45) {
+        ageAdjustment = 10;
+    } else {
+        ageAdjustment = 0;
+    }
+
+    int visits = patient.getTotalVisits();
+    if (visits > 20) {
+        visitAdjustment = 15;
+    } else if (visits > 10) {
+        visitAdjustment = 8;
+    } else {
+        visitAdjustment = 0;
+    }
+
+    char status = appointment.getStatus();
+    switch (status) {
+        case 'P': finalScore = basePriority + ageAdjustment + visitAdjustment; break;
+        case 'H': finalScore = basePriority + ageAdjustment + visitAdjustment + 25; break;
+        case 'R': finalScore = basePriority + ageAdjustment; break;
+        default:  finalScore = 0;
+    }
+    return finalScore;
 }
+```
 
-// *** REFACTORED caller — HospitalUtils.java ***
-// BEFORE: switch (status) { case 'P': return "Pending"; ... }
-// AFTER:  one line, no switch, no duplication:
-public static String statusLabel(char status) {
-    return AppointmentStatus.fromCode(status).getLabel();
+**Trace inputs used:**
+- appointment: apptId=1001, fee=1500.0, status='P'
+- patient: dob="12/05/1985", totalVisits=8
+
+---
+
+#### Q12 — Execution Trace Table
+
+| Step | Statement Executed | Variables Before | Variables After | Notes |
+|------|-------------------|-----------------|-----------------|-------|
+| 1 | int basePriority = 0 | — | basePriority=0 | Initialize |
+| 2 | int ageAdjustment = 0 | basePriority=0 | ageAdjustment=0 | Initialize |
+| 3 | int visitAdjustment = 0 | ageAdjustment=0 | visitAdjustment=0 | Initialize |
+| 4 | int finalScore = 0 | visitAdjustment=0 | finalScore=0 | Initialize |
+| 5 | double fee = appointment.getFee() | finalScore=0 | fee=1500.0 | Read appointment field |
+| 6 | if (fee >= 5000) | fee=1500.0 | — | FALSE (1500 < 5000) |
+| 7 | else if (fee >= 2000) | fee=1500.0 | — | FALSE (1500 < 2000) |
+| 8 | basePriority = 10 | basePriority=0 | basePriority=10 | else branch |
+| 9 | String dob = patient.getDateOfBirth() | basePriority=10 | dob="12/05/1985" | Read patient field |
+| 10 | int age = 0 | dob="12/05/1985" | age=0 | Initialize |
+| 11 | if (dob != null && dob.length() == 10) | dob length=10 | — | TRUE, enters try |
+| 12 | int birthYear = Integer.parseInt("1985") | age=0 | birthYear=1985 | Parse substring |
+| 13 | int currentYear = LocalDate.now().getYear() | birthYear=1985 | currentYear=2026 | Runtime year |
+| 14 | age = currentYear - birthYear | age=0 | age=41 | Computed age |
+| 15 | if (age >= 65) | age=41 | — | FALSE |
+| 16 | else if (age >= 45) | age=41 | — | FALSE |
+| 17 | ageAdjustment = 0 | ageAdjustment=0 | ageAdjustment=0 | else branch |
+| 18 | int visits = patient.getTotalVisits() | ageAdjustment=0 | visits=8 | Read patient field |
+| 19 | if (visits > 20) | visits=8 | — | FALSE |
+| 20 | else if (visits > 10) | visits=8 | — | FALSE |
+| 21 | visitAdjustment = 0 | visitAdjustment=0 | visitAdjustment=0 | else branch |
+| 22 | char status = appointment.getStatus() | visitAdjustment=0 | status='P' | Read appointment field |
+| 23 | switch(status) case 'P' | status='P' | — | 'P' branch |
+| 24 | finalScore = basePriority + ageAdjustment + visitAdjustment | 10,0,0 | finalScore=10 | 10+0+0 |
+| 25 | return finalScore | finalScore=10 | — | Returns 10 |
+
+---
+
+#### Q13 — Python Tutor Screenshot Note
+
+> **Screenshot instruction:** Load the method into Python Tutor (https://pythontutor.com/java.html).  
+> Capture the frame at **Step 6** (if (fee >= 5000)). The frame panel should show:  
+> basePriority=0, ageAdjustment=0, visitAdjustment=0, finalScore=0, fee=1500.0.  
+> The condition evaluates to **false**, and execution moves to the else-if branch.
+
+---
+
+#### Q14 — Branch Explanation
+
+At Step 6, the condition fee >= 5000 is false because fee is 1500.0. Execution moves to Step 7, where fee >= 2000 is also false. The else branch assigns basePriority = 10. Age logic produces age = 41, which fails both age >= 65 and age >= 45, so ageAdjustment remains 0. Visits are 8, which fails both visits > 20 and visits > 10, so visitAdjustment remains 0. The switch selects case 'P', so finalScore = 10 + 0 + 0 = 10. This branch is correct for a standard-fee, non-senior patient with few visits.
+
+---
+
+### D2. Control Flow Graph
+
+#### CFG Description (Graphviz DOT)
+
+```dot
+digraph CFG_computePriority {
+    rankdir=TB;
+    node [shape=rectangle, fontsize=10];
+
+    ENTRY [shape=oval, label="ENTRY"];
+    B1 [label="init vars + fee read"];
+    D1 [shape=diamond, label="fee >= 5000?"];
+    B2 [label="basePriority = 30"];
+    D2 [shape=diamond, label="fee >= 2000?"];
+    B3 [label="basePriority = 20"];
+    B4 [label="basePriority = 10"];
+
+    B5 [label="dob read + age=0"];
+    D3 [shape=diamond, label="dob != null && len==10?"];
+    B6 [label="parse birthYear, age"];
+    B7 [label="age stays 0"];
+    D4 [shape=diamond, label="age >= 65?"];
+    B8 [label="ageAdjustment = 20"];
+    D5 [shape=diamond, label="age >= 45?"];
+    B9 [label="ageAdjustment = 10"];
+    B10 [label="ageAdjustment = 0"];
+
+    B11 [label="visits read"];
+    D6 [shape=diamond, label="visits > 20?"];
+    B12 [label="visitAdjustment = 15"];
+    D7 [shape=diamond, label="visits > 10?"];
+    B13 [label="visitAdjustment = 8"];
+    B14 [label="visitAdjustment = 0"];
+
+    B15 [label="status read"];
+    D8 [shape=diamond, label="switch(status)"];
+    B16 [label="case 'P'\nfinalScore=base+age+visit"];
+    B17 [label="case 'H'\nfinalScore=base+age+visit+25"];
+    B18 [label="case 'R'\nfinalScore=base+age"];
+    B19 [label="default\nfinalScore=0"];
+
+    EXIT [shape=oval, label="EXIT return finalScore"];
+
+    ENTRY -> B1 -> D1;
+    D1 -> B2 [label="true"];
+    D1 -> D2 [label="false"];
+    D2 -> B3 [label="true"];
+    D2 -> B4 [label="false", color=blue, penwidth=2];
+    B2 -> B5; B3 -> B5; B4 -> B5 [color=blue, penwidth=2];
+
+    B5 -> D3;
+    D3 -> B6 [label="true", color=blue, penwidth=2];
+    D3 -> B7 [label="false"];
+    B6 -> D4 [color=blue, penwidth=2];
+    B7 -> D4;
+    D4 -> B8 [label="true"];
+    D4 -> D5 [label="false", color=blue, penwidth=2];
+    D5 -> B9 [label="true"];
+    D5 -> B10 [label="false", color=blue, penwidth=2];
+    B8 -> B11; B9 -> B11; B10 -> B11 [color=blue, penwidth=2];
+
+    B11 -> D6;
+    D6 -> B12 [label="true"];
+    D6 -> D7 [label="false", color=blue, penwidth=2];
+    D7 -> B13 [label="true"];
+    D7 -> B14 [label="false", color=blue, penwidth=2];
+    B12 -> B15; B13 -> B15; B14 -> B15 [color=blue, penwidth=2];
+
+    B15 -> D8;
+    D8 -> B16 [label="'P'", color=blue, penwidth=2];
+    D8 -> B17 [label="'H'"];
+    D8 -> B18 [label="'R'"];
+    D8 -> B19 [label="default"];
+    B16 -> EXIT [color=blue, penwidth=2];
+    B17 -> EXIT; B18 -> EXIT; B19 -> EXIT;
 }
+```
 
-// *** PatientManager.java — duplicate method DELETED entirely ***
-// getAppointmentStatusLabel() is removed; callers use AppointmentStatus directly.
-`
+**Highlighted path** = trace path for fee=1500, age=41, visits=8, status='P'.
 
----
+#### CFG Analysis
 
-### Q10 — Behaviour Preservation and Structural Improvement
+**(1) Independent Paths:** 11 (matches the cyclomatic complexity count).
 
-The external behaviour of the system is completely unchanged: every call to statusLabel('P') still returns "Pending", statusLabel('C') still returns "Completed", and so on for all five valid codes. The only observable difference for an invalid code is that romCode() now throws an IllegalArgumentException instead of silently returning "Unknown Status" — this is a deliberate improvement, as the silent default was masking data-integrity bugs. The existing JUnit test 	estStatusLabel() in HealthBridgeTest.java confirms all five labels still pass.
+**(2) Cyclomatic Complexity (CC):**  
+Nodes N = 29, Edges E = 38.  
+CC = E − N + 2 = 38 − 29 + 2 = **11**.  
+This should match SonarQube's CC for the method (decision points + 1).
 
-Structurally, three significant properties were improved. First, the Open/Closed Principle is now satisfied: adding a new status code requires editing only AppointmentStatus.java — no other class needs touching. Second, the Shotgun Surgery smell is eliminated — the three previously-scattered switch blocks collapse into one place. Third, the type system now prevents invalid status codes at compile time: any method that previously accepted a raw char can be updated to accept AppointmentStatus, making illegal state unrepresentable.
-
----
-
-## Part C — Dependency, Coupling and Technical Debt
-
-### C1. Dependency Mapping
-
-**Six classes analysed:**
-
-| Class Name | Ca | Ce | Instability (I = Ce/(Ca+Ce)) | Stable / Volatile | Key Observation |
-|-----------|----|----|------------------------------|-------------------|-----------------|
-| Patient | 4 | 0 | **0.00 — Maximally Stable** | Stable | Depended on by PatientManager, AppointmentService, BillingProcessor, ReportGenerator. Has no outgoing dependencies itself. Any change breaks 4 callers. |
-| PatientManager | 3 | 5 | **0.63 — Volatile** | Volatile | Depended on by AppointmentService, BillingProcessor, ReportGenerator. Itself depends on Patient, Appointment, Billing, Doctor, Department — God Class confirmed (Ce > 5 counting model imports). |
-| Appointment | 3 | 0 | **0.00 — Maximally Stable** | Stable | Depended on by PatientManager, AppointmentService, HospitalUtils. Pure data holder. |
-| AppointmentService | 0 | 3 | **1.00 — Maximally Unstable** | Volatile | No class depends on it; it depends on PatientManager, Patient, Doctor. Classic unstable leaf. |
-| HospitalUtils | 2 | 2 | **0.50 — Neutral** | Neutral | Depended on by Main and HealthBridgeTest. Depends on Appointment, Patient. |
-| BillingProcessor | 0 | 3 | **1.00 — Maximally Unstable** | Volatile | No class depends on it; depends on PatientManager, Billing, Patient. Standalone processor never reused. |
+**(3) One change to reduce CC by 1:** Replace the fee bracket else-if with a lookup (Map or helper) so only one fee decision remains, reducing CC from 11 to 10.
 
 ---
 
-#### Full Workings — Patient (Ca=4, Ce=0)
+### D3. Abstract Syntax Tree Inspection
 
-**Ca contributors (classes that import/use Patient):**
-1. PatientManager — holds List<Patient>, calls p.getName(), p.getPhone1(), etc.
-2. AppointmentService — calls manager.findPatientById() and reads patient fields directly
-3. BillingProcessor — calls manager.findPatientById() to get patient name for billing
-4. ReportGenerator — calls manager.findPatientById() and prints patient fields
+#### Q15 — AST Screenshot Note
 
-**Ce contributors:** None — Patient has zero imports of project classes.
-
-**I = 0 / (4 + 0) = 0.00** → Maximally stable. Should never change structure without extreme caution.
+> **Screenshot instruction:** Load computeAppointmentPriority() into AST Explorer (https://astexplorer.net) with parser set to Java (java-parser). Expand to at least 3 levels. Capture screenshot showing MethodDeclaration expanded.
 
 ---
 
-#### Full Workings — PatientManager (Ca=3, Ce=5)
+#### Q16 — Annotated Node Types
 
-**Ca contributors (classes that depend ON PatientManager):**
-1. AppointmentService — constructor receives PatientManager manager
-2. BillingProcessor — constructor receives PatientManager manager
-3. ReportGenerator — constructor receives PatientManager manager
-
-**Ce contributors (classes PatientManager depends ON):**
-1. Patient — instantiates and stores
-2. Appointment — instantiates and stores
-3. Billing — instantiates and stores
-4. Doctor — instantiates and stores
-5. Department — instantiates and stores
-
-**I = 5 / (3 + 5) = 0.625** → Volatile God Class. High efferent coupling confirms God Class identity (Ce = 5, Ce > 5 threshold if counting java.time imports too).
+| AST Node Type | Location in AST | What it Represents |
+|--------------|----------------|-------------------|
+| MethodDeclaration | Root of method | Method signature, parameters, return type, and body |
+| VariableDeclaration | Inside method body | Variable declarations like basePriority, ageAdjustment, visits |
+| IfStatement | Inside body | fee >= 5000, age >= 65, visits > 20 checks |
+| SwitchStatement | Inside body | switch(status) with case entries |
+| ReturnStatement | Last statement | return finalScore |
+| BinaryExpression | Inside IfStatement.condition | Expressions like fee >= 5000 or visits > 10 |
 
 ---
 
-#### Dependency Graph (Graphviz DOT — embed rendered image in final PDF)
+#### Q17 — IfStatement Internal Structure and AST Use Case
 
-`dot
-digraph HealthBridge {
-    rankdir=LR;
-    node [shape=box, fontname="Helvetica", style=filled, fillcolor=lightyellow];
+**IfStatement internal structure:** An IfStatement node has a condition (BinaryExpression), a thenStatement (BlockStatement), and an optional elseStatement. In an else-if chain, the elseStatement is another IfStatement, so the AST forms a nested tree rather than a flat list. This structure makes it easy to traverse and analyze each condition independently of its branch body.
 
-    // Stable nodes
-    Patient     [fillcolor=lightgreen, label="Patient\nCa=4 Ce=0 I=0.00"];
-    Appointment [fillcolor=lightgreen, label="Appointment\nCa=3 Ce=0 I=0.00"];
-    Doctor      [fillcolor=lightgreen, label="Doctor\nCa=2 Ce=0"];
-    Billing     [fillcolor=lightgreen, label="Billing\nCa=2 Ce=0"];
-    Department  [fillcolor=lightgreen, label="Department\nCa=2 Ce=0"];
-
-    // God Class
-    PatientManager [fillcolor=red, label="PatientManager\nCa=3 Ce=5 I=0.63\n*** GOD CLASS ***"];
-
-    // Unstable leaves
-    AppointmentService [fillcolor=orange, label="AppointmentService\nCa=0 Ce=3 I=1.00"];
-    BillingProcessor   [fillcolor=orange, label="BillingProcessor\nCa=0 Ce=3 I=1.00"];
-    ReportGenerator    [fillcolor=orange, label="ReportGenerator\nCa=0 Ce=2 I=1.00"];
-    HospitalUtils      [fillcolor=lightyellow, label="HospitalUtils\nCa=2 Ce=2 I=0.50"];
-
-    // Edges
-    PatientManager -> Patient;
-    PatientManager -> Appointment;
-    PatientManager -> Billing;
-    PatientManager -> Doctor;
-    PatientManager -> Department;
-
-    AppointmentService -> PatientManager;
-    AppointmentService -> Patient;
-    AppointmentService -> Doctor;
-
-    BillingProcessor -> PatientManager;
-    BillingProcessor -> Billing;
-    BillingProcessor -> Patient;
-
-    ReportGenerator -> PatientManager;
-    ReportGenerator -> Billing;
-
-    HospitalUtils -> Appointment;
-    HospitalUtils -> Patient;
-}
-`
-
-> **Note:** No circular dependencies detected. PatientManager is confirmed as a God Class (Ce = 5).
-
----
-
-### C2. Technical Debt Assessment
-
-#### Debt Items
-
-| Item | File + Line | Debt Type | Intentional? | Prudent or Reckless? |
-|------|------------|-----------|-------------|----------------------|
-| D1 | PatientManager.java L175–240 — processFullAdmission() monolithic method | Design Debt | Yes — known shortcut taken under sprint pressure | Prudent (acknowledged at time) |
-| D2 | HospitalUtils.java L33 & PatientManager L107 — duplicate switch blocks | Code Debt | No — arose from copy-paste, never noticed | Reckless |
-| D3 | HealthBridgeTest.java — no tests for processFullAdmission(), 
-escheduleAppointment(), or BillingProcessor | Test Debt | No — tests never written for complex methods | Reckless |
+**Practical re-engineering use case:** In a refactoring engine, AST traversal can detect nested IfStatement chains and automatically extract them into guard clauses or strategy maps, reducing cognitive complexity. In a linter, the same traversal can flag magic literals (e.g., 5000, 2000) inside BinaryExpression nodes and recommend named constants. AST-based analysis is accurate because it uses syntax trees rather than brittle text parsing.
+| D2 | PatientManager.java:44 and BillingProcessor.java:40 — duplicate validation logic | Code Debt | No — copy-paste without reuse | Reckless |
+| D3 | HospitalUtils.java:27 — statusLabel() switch on primitive status code | Code Debt | No — quick switch block duplicated elsewhere | Reckless |
 
 ---
 
 #### Remediation Cost Calculation
 
 **Assumptions (SonarQube estimated values):**
-- D1 (Long Method / Design Debt): SonarQube estimates ~60 min to decompose
-- D2 (Duplicate Code): SonarQube estimates ~30 min to extract and deduplicate
-- D3 (Test Debt — missing tests): SonarQube estimates ~45 min to write 8 missing test cases
+- D1 (Long Method / Design Debt): 60 min
+- D2 (Duplicate Code): 30 min
+- D3 (Switch Statements / Code Debt): 45 min
 
-**Project LOC:** ~650 lines (main sources only, excluding tests)
+**Project LOC (SonarQube ncloc):** 1537
 
 | Item | Raw Estimate (min) | × 1.25 Buffer | Buffered Total (min) |
 |------|--------------------|---------------|----------------------|
 | D1 — Long Method | 60 | × 1.25 | **75** |
 | D2 — Duplicate Code | 30 | × 1.25 | **37.5** |
-| D3 — Test Debt | 45 | × 1.25 | **56.25** |
+| D3 — Switch Statements | 45 | × 1.25 | **56.25** |
 | **TOTAL** | **135** | | **168.75** |
 
-**Total Development Effort** = 650 LOC × 30 min/line = 19,500 min  
-**Debt Ratio** = (168.75 / 19,500) × 100 = **0.87%**  
+**Total Development Effort** = 1537 LOC × 30 min/line = 46,110 min  
+**Debt Ratio** = (168.75 / 46,110) × 100 = **0.37%**  
 **Health Category: Healthy (0–5%)**
 
 ---
 
 #### Prioritisation Argument (200 words)
 
-Although the computed Debt Ratio of 0.87% places HealthBridge in the "Healthy" category, this figure is misleading for a hospital information system where correctness and auditability are non-negotiable. The three debt items carry very different risk profiles beyond their raw remediation cost.
+Even with a low Debt Ratio (0.37%), the operational risk is not evenly distributed. The admission workflow is core to every clinic visit, so any defect there has a high business impact.
 
-**D3 — Test Debt should be fixed first.** The absence of unit tests for processFullAdmission(), 
-escheduleAppointment(), and all of BillingProcessor means that any refactoring of D1 or D2 is blind — there is no automated verification that behaviour is preserved. Deferring test debt makes every other debt item more expensive to fix because each refactoring must be manually verified. A missing test for billing calculation could allow a tax-computation regression to reach production, resulting in incorrect patient invoices or regulatory non-compliance.
+**Fix D1 first (processFullAdmission long method).** It mixes registration, scheduling, billing, notification, and audit in one 80+ line block. This is the most change-prone area and the hardest to test. Extracting methods reduces cognitive load, enables targeted unit tests, and lowers the risk of unintended side effects when billing or scheduling rules change.
 
-**D1 — Design Debt (Long Method) should be fixed second.** Once tests exist, decomposing processFullAdmission() directly reduces the blast radius of future changes and reduces cyclomatic complexity, lowering the probability of defects.
+**Fix D2 second (duplicate validation).** The same null/blank checks are copy-pasted in PatientManager and BillingProcessor. This creates hidden divergence risk: a future update to validation rules will be applied inconsistently unless every copy is updated. Consolidating the checks into a helper is a low-cost refactor with immediate maintainability gains.
 
-**D2 — Code Debt (Duplicate Code) should be fixed last.** It carries the lowest deferral risk — the duplicated logic is consistent across copies — but fixing it becomes naturally easy after D1 is refactored, since extracted helper methods can be shared directly.
+**Fix D3 last (status switch statement).** The switch is localized and can be replaced by AppointmentStatus later. It is useful, but its deferral risk is lower than admission logic and validation correctness.
+
+This ordering maximizes business protection with the least cost: stabilize the admission flow first, remove duplicated logic next, and clean up the remaining code smell last.
 
 ---
 
