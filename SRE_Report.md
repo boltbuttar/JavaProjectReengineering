@@ -2,13 +2,29 @@
 
 ## Part A — Project Initialisation and Tool Setup
 
-### A1. Project Overview
-**Project Name:** HealthBridge Hospital Management System  
-**Language:** Java 11 (compiled with JDK 8.0.482)  
-**Build Tool:** Maven (pom.xml)  
-**Project Key:** healthbridge-hms  
+### A1. Java Project Selection
+**GitHub URL:** https://github.com/boltbuttar/JavaProjectReengineering.git
 
-**Project Structure:**
+**System Description (Paragraph 1):**
+HealthBridge Hospital Management System is a Java-based hospital operations system that models core entities such as patients, doctors, departments, appointments, and billing. It provides services for patient registration, appointment scheduling, billing creation, reporting, and notification workflows that represent a typical mid-sized hospital's front-desk and clinical coordination processes.
+
+**System Description (Paragraph 2):**
+The project also includes a pharmacy submodule that models medications, prescriptions, inventory control, and dispense checks. This module integrates with core patient data and introduces policy enforcement (formulary rules, interaction checks, expiry checks), giving the system richer cross-class dependencies that are useful for re-engineering analysis and refactoring demonstrations.
+
+**Metrics and Environment:**
+- Total Java LOC (src/main/java): **2075**
+- Java class count (src/main/java): **22**
+- Java version: **11** (Maven compiler source/target in pom.xml; compiled locally with JDK 8.0.482)
+- Build tool: **Maven**
+- Compiles successfully: **Yes**
+
+**Repository Screenshot (Required):**
+[Screenshot Placeholder: GitHub repository page with your account or fork visible]
+
+**Why this is a good candidate for code smell analysis:**
+The codebase is intentionally service-heavy, with cross-cutting responsibilities concentrated in a few central classes, making structural smells visible without advanced tooling. There are clear instances of long methods, large classes, switch-based type codes, and duplicated logic. These issues appear across multiple collaborating classes (services, models, and utilities), which provides a realistic environment for detecting, prioritizing, and refactoring smells while still being small enough to analyze thoroughly in Parts B, C, and D.
+
+**Project Structure (excerpt):**
 ```
 Project_SRE/
 ├── pom.xml
@@ -16,44 +32,30 @@ Project_SRE/
 └── src/
     ├── main/java/com/healthbridge/
     │   ├── Main.java
-    │   ├── model/
-    │   │   ├── Patient.java
-    │   │   ├── Appointment.java
-    │   │   ├── Doctor.java
-    │   │   ├── Department.java
-    │   │   └── Billing.java
-    │   ├── service/
-    │   │   ├── PatientManager.java
-    │   │   ├── AppointmentService.java
-    │   │   ├── BillingProcessor.java
-    │   │   ├── ReportGenerator.java
-    │   │   └── NotificationService.java
-    │   └── util/
-    │       └── HospitalUtils.java
+    │   ├── model/ (Patient, Appointment, Doctor, Department, Billing)
+    │   ├── service/ (PatientManager, AppointmentService, BillingProcessor, ReportGenerator, NotificationService)
+    │   ├── util/ (HospitalUtils)
+    │   └── pharmacy/ (Medication, Prescription, PharmacyInventory, DispenseService, etc.)
     └── test/java/com/healthbridge/
         └── HealthBridgeTest.java
 ```
 
-**Compilation Command:**
-```
-javac -d target/classes -sourcepath src/main/java src/main/java/**/*.java
-```
-Project compiles cleanly with zero errors.
+### A2. Tool Installation and Verification
 
-### A2. SonarQube Setup
-**sonar-project.properties:**
-```properties
-sonar.projectKey=healthbridge-hms
-sonar.projectName=HealthBridge Hospital Management System
-sonar.projectVersion=1.0.0
-sonar.sources=src/main/java
-sonar.tests=src/test/java
-sonar.java.binaries=target/classes
-sonar.sourceEncoding=UTF-8
+| Tool | Purpose | Verification Evidence (include version) |
+|------|---------|------------------------------------------|
+| SonarQube via Docker | Static analysis, smells, metrics | Screenshot of SonarQube dashboard at http://localhost:9000 showing version |
+| SonarScanner | Submits project to SonarQube | Terminal output showing scanner version and BUILD SUCCESS |
+| Docker | Hosts SonarQube container | Screenshot of `docker --version` output |
+| Python Tutor (online) | Step-by-step execution tracing | Screenshot with code loaded in Python Tutor and URL visible |
+| Draw.io or Graphviz | Control flow and dependency diagrams | Screenshot of diagram open in tool with version visible |
+| MySQL or PostgreSQL | Run legacy hospital schema | Screenshot of `mysql --version` or `psql --version` output |
+
+**Commands used for verification (copy/paste):**
 ```
-**Scanner Command:**
-```
-sonar-scanner
+docker --version
+sonar-scanner -v
+mysql --version
 ```
 
 ---
@@ -465,7 +467,8 @@ digraph HealthBridge {
 |------|------------|-----------|-------------|----------------------|
 | D1 | PatientManager.java L175–240 — processFullAdmission() monolithic method | Design Debt | Yes — known shortcut taken under sprint pressure | Prudent (acknowledged at time) |
 | D2 | HospitalUtils.java L33 & PatientManager L107 — duplicate switch blocks | Code Debt | No — arose from copy-paste, never noticed | Reckless |
-| D3 | HealthBridgeTest.java — no tests for processFullAdmission(), escheduleAppointment(), or BillingProcessor | Test Debt | No — tests never written for complex methods | Reckless |
+| D3 | HealthBridgeTest.java — no tests for processFullAdmission(), 
+escheduleAppointment(), or BillingProcessor | Test Debt | No — tests never written for complex methods | Reckless |
 
 ---
 
@@ -495,7 +498,8 @@ digraph HealthBridge {
 
 Although the computed Debt Ratio of 0.87% places HealthBridge in the "Healthy" category, this figure is misleading for a hospital information system where correctness and auditability are non-negotiable. The three debt items carry very different risk profiles beyond their raw remediation cost.
 
-**D3 — Test Debt should be fixed first.** The absence of unit tests for processFullAdmission(), escheduleAppointment(), and all of BillingProcessor means that any refactoring of D1 or D2 is blind — there is no automated verification that behaviour is preserved. Deferring test debt makes every other debt item more expensive to fix because each refactoring must be manually verified. A missing test for billing calculation could allow a tax-computation regression to reach production, resulting in incorrect patient invoices or regulatory non-compliance.
+**D3 — Test Debt should be fixed first.** The absence of unit tests for processFullAdmission(), 
+escheduleAppointment(), and all of BillingProcessor means that any refactoring of D1 or D2 is blind — there is no automated verification that behaviour is preserved. Deferring test debt makes every other debt item more expensive to fix because each refactoring must be manually verified. A missing test for billing calculation could allow a tax-computation regression to reach production, resulting in incorrect patient invoices or regulatory non-compliance.
 
 **D1 — Design Debt (Long Method) should be fixed second.** Once tests exist, decomposing processFullAdmission() directly reduces the blast radius of future changes and reduces cyclomatic complexity, lowering the probability of defects.
 
@@ -608,7 +612,8 @@ public static int computeAppointmentPriority(Appointment appointment, Patient pa
 | 22 | char status = appointment.getStatus() | visitAdjustment=0 | status='P' | Read appointment field |
 | 23 | switch(status) — case 'P': | status='P' | — | **'P' branch taken** |
 | 24 | inalScore = basePriority + ageAdjustment + visitAdjustment | all=10,0,0 | finalScore=10 | 10+0+0=10 |
-| 25 | eturn finalScore | finalScore=10 | — | **Returns 10** |
+| 25 | 
+eturn finalScore | finalScore=10 | — | **Returns 10** |
 
 ---
 
@@ -742,7 +747,8 @@ Remove the else if (fee >= 2000) branch by replacing fee-bracketing with a helpe
 | VariableDeclaration | Inside MethodDeclaration body | int basePriority = 0, int ageAdjustment = 0, etc. — each declaration is a separate node |
 | IfStatement | Inside body, three instances | The ee >= 5000, ge >= 65, isits > 20 conditions — each has a condition, 	henStatement, and optional elseStatement child |
 | SwitchStatement | Inside body, one instance | The switch(status) block — contains a selector expression and SwitchEntry children |
-| ReturnStatement | Last node in body | eturn finalScore — contains an expression child referencing the variable |
+| ReturnStatement | Last node in body | 
+eturn finalScore — contains an expression child referencing the variable |
 | BinaryExpression | Inside IfStatement.condition | ee >= 5000 represented as BinaryExpr with operator >=, left=NameExpr("fee"), right=IntegerLiteralExpr(5000) |
 
 ---
@@ -770,7 +776,9 @@ A linter can traverse the AST and count the depth of nested IfStatement nodes to
 |---|-------|-----------|---------------|-----------|---------------------|-------------------------------|-------------|
 | 1 | pat_master | dob VARCHAR(50) | Data Type | Type Optimization Smell | Date of birth stored as plain text string 'DD/MM/YYYY' instead of a DATE column | Age calculations for drug dosing or eligibility checks will fail or produce wrong results if format varies (e.g., '1985/05/12' vs '12-05-1985') | Change to DATE type; migrate existing strings via STR_TO_DATE(dob, '%d/%m/%Y') |
 | 2 | pat_master | ph1, ph2, ph3 VARCHAR(255) | Structural | Non-Atomic Fields / Unnormalized Table | Three repeating phone columns violate 1NF — a patient can have at most 3 phones hardcoded | Adding a 4th phone number requires an ALTER TABLE; existing queries break; some patients may have no ph2 or ph3, wasting space | Create separate patient_phones(pid, phone_number, phone_type) table |
-| 3 | pat_master | eg_doc VARCHAR(255) | Redundancy | Duplicate Data | Doctor's full name stored as plain text — duplicated from the doctors table's FullName column | If a doctor changes their name or is replaced, pat_master.reg_doc goes stale silently, producing wrong patient-doctor assignments | Replace with eg_doc_id INT REFERENCES doctors(DoctorID); drop the name column |
+| 3 | pat_master | 
+eg_doc VARCHAR(255) | Redundancy | Duplicate Data | Doctor's full name stored as plain text — duplicated from the doctors table's FullName column | If a doctor changes their name or is replaced, pat_master.reg_doc goes stale silently, producing wrong patient-doctor assignments | Replace with 
+eg_doc_id INT REFERENCES doctors(DoctorID); drop the name column |
 | 4 | illing | 	ax_amt, grand_total, balance | Redundancy | Derived Data | All three columns are mathematically derived: 	ax_amt = svc_cost * tax_pct / 100, grand_total = svc_cost + tax_amt, alance = grand_total - paid | If svc_cost is corrected after a billing error, the stored grand_total and alance are NOT automatically updated — patients may be under- or over-charged | Drop the three columns; replace with a _billing_summary view that computes them on read |
 | 5 | ppointments | status CHAR(1) | Semantic | Magic Values / Encoded Nulls | Status is encoded as 'P','C','X','H','R' with no reference table or constraint | An application bug inserts 'D' (discharged) or 'p' (lowercase); the record silently accepts invalid data; reports show wrong appointment counts | Create ppt_status_ref(status_code CHAR(1) PRIMARY KEY, description VARCHAR(50)) and add FK constraint |
 | 6 | doctors | DoctorID, FullName, ContactNo, JoinDt, isActive | Naming | Inconsistent Naming | Column names mix PascalCase (DoctorID, FullName), camelCase (isActive), abbreviation (JoinDt), and snake_case (dept_id) in the same table | ORM frameworks auto-map columns to Java fields by convention; mixed casing causes mapping failures requiring manual overrides on every field, increasing developer error | Standardise all columns to snake_case: doctor_id, ull_name, join_date, is_active |
@@ -807,8 +815,13 @@ Data smells in a hospital information system are not merely technical inconvenie
 | Normal Form | Violated? | Specific Violation Example from pat_master |
 |------------|-----------|-------------------------------------------|
 | **1NF** — Atomic values; no repeating groups | **Yes** | ph1, ph2, ph3 are a repeating group of phone numbers in three separate columns. A patient with a 4th phone number cannot be stored. Each column is atomic individually, but the group violates 1NF's no-repeating-groups rule. |
-| **2NF** — Full dependency on the whole key | **Yes** | There is no defined primary key, so technically all attributes fail 2NF. If we nominate pid as the candidate key, columns like city and ddr1/ddr2 depend on the patient's address, not directly on pid — they would form a partial dependency if a composite key existed. More critically, eg_doc (doctor's name) has nothing to do with the patient's identity; it depends on eg_doc_id, not pid. |
-| **3NF** — No transitive dependencies | **Yes** | eg_doc VARCHAR(255) is transitively dependent on pid via eg_doc_id: pid → reg_doc_id → reg_doc. The doctor's name should be derived by joining on eg_doc_id, not stored here. Similarly, city is arguably an attribute of the address record, not of the patient directly, creating a transitive path pid → (addr1, addr2) → city. |
+| **2NF** — Full dependency on the whole key | **Yes** | There is no defined primary key, so technically all attributes fail 2NF. If we nominate pid as the candidate key, columns like city and ddr1/ddr2 depend on the patient's address, not directly on pid — they would form a partial dependency if a composite key existed. More critically, 
+eg_doc (doctor's name) has nothing to do with the patient's identity; it depends on 
+eg_doc_id, not pid. |
+| **3NF** — No transitive dependencies | **Yes** | 
+eg_doc VARCHAR(255) is transitively dependent on pid via 
+eg_doc_id: pid → reg_doc_id → reg_doc. The doctor's name should be derived by joining on 
+eg_doc_id, not stored here. Similarly, city is arguably an attribute of the address record, not of the patient directly, creating a transitive path pid → (addr1, addr2) → city. |
 
 ---
 
@@ -877,7 +890,9 @@ CREATE VIEW v_patient_last_bill AS
 | Number of tables | 1 | 3 (patients, patient_phones, patient_addresses) + 1 view |
 | Repeating phone columns | ph1, ph2, ph3 hardcoded | Unlimited phones in patient_phones child table |
 | Address storage | Inline ddr1/ddr2/city in same row | Separate patient_addresses table; supports multiple addresses |
-| Doctor reference | eg_doc VARCHAR(255) (plain text name) | egistered_doc_id INT FK → doctors.doctor_id |
+| Doctor reference | 
+eg_doc VARCHAR(255) (plain text name) | 
+egistered_doc_id INT FK → doctors.doctor_id |
 | Date of birth column type | VARCHAR(50) | DATE — enforces format, enables date arithmetic |
 | Primary key | None defined | patient_id INT AUTO_INCREMENT PRIMARY KEY |
 | Currency columns | last_bill FLOAT | Removed from patients; derived via _patient_last_bill view using DECIMAL(10,2) in billing |
